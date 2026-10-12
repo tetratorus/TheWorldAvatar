@@ -31,21 +31,28 @@ adapter reprojects both to EPSG:3414.
 
 `buildings.plot_id` comes from the stack's BuildingIdentificationAgent `landplot_buildings` table. Where that table has no row,
 the adapter falls back to "the building's centroid lies inside the plot". The optional Bronze input `hubs` is a snapshot of
-existing spine hub tables (for example from `ura.mp2019_conform`). It lets TWA features reuse those hub ids instead of creating
-parallel keys.
+lake's current Silver `plots`, `buildings` **and `id_bridge`** (for example after `ura.mp2019_conform` and `duct.bdp_conform`). It lets
+TWA features reuse those hub ids instead of creating parallel keys, and it is what keeps the other sources' rows alive (below).
 
 ## Which Silver tables this writes, and why not `zoning`
 LAYERS.md lists `twa.sg_stack_conform` for **buildings** and gives `plots`/`zoning` to `ura.mp2019_conform`. The stack's landplot
 `LU_DESC` and `GPR` are copies of the URA Master Plan 2019, so a TWA `zoning` table would only duplicate MP2019, and because
-`Lake.silver_write` replaces whole tables it would wipe the MP2019 one. So:
+`Lake.silver_write` replaces whole tables it would wipe the MP2019 one. The same whole-table replace applies to every output, so
+all three are union-preserving against the `hubs` snapshot:
 - **No `zoning` output.** GFA and anything else that needs GPR read `ura.mp2019_conform`'s Silver `zoning`.
 - **`plots` is still emitted** (the task asks for plots, and the landplot IRIs need a plot hub to bridge to). It is
   union-preserving: every row of the `hubs` snapshot comes back unchanged (MP2019 geometry and `source_version` win), and only
   TWA landplots that matched no existing hub are added as `twa-p-*`. Covered by the `tanjong_pagar_with_ura_hubs` golden and
   `test_snapshot_plots_survive_whole_table_write`.
-- **`buildings`** works the same way. TWA rows win for matched hubs (TWA is a listed buildings owner), and unmatched snapshot
-  buildings (e.g. from `duct.bdp_conform`) pass through.
-- Run it with a current `hubs` snapshot of the lake's Silver `plots`/`buildings`. Without one, those two tables hold TWA rows only.
+- **`buildings`** works the same way. TWA rows win for matched hubs (TWA is a listed buildings owner; the hub id is kept, the
+  row's attributes are TWA's), and unmatched snapshot buildings (e.g. from `duct.bdp_conform`) pass through unchanged. Covered
+  by the `tanjong_pagar_with_building_hubs` golden and `test_snapshot_buildings_union`.
+- **`id_bridge`** is union-preserving too. Every snapshot row whose `source` is not `twa_kg` (`ura_mp2019`, `duct_bdp`,
+  `cea_zone`, ...) comes back unchanged, and only the `twa_kg` rows are replaced by this run's rows. Covered by both hub goldens
+  and `test_foreign_bridge_rows_survive_whole_table_write`.
+- **Always run it with a current `hubs` snapshot that includes `id_bridge.parquet`** as well as `plots`/`buildings`. Without one
+  (or with a stale one) the three tables hold TWA rows only, and **every other source's `id_bridge` rows are deleted**, which
+  breaks LAYERS.md rule 9 (IDs bridge, never fork) for those sources.
 
 ## CEAAgent → `cea.building_demand`
 CEAAgent (Java + its own CEA Python workflow) stays the stack-side runtime. The spine-facing contract is `cea.building_demand`
@@ -69,10 +76,11 @@ The TWA code is MIT (`LICENSE.txt`). The Singapore stack *data* has its own sour
 provider), so the descriptor declares `commercial_use: review`.
 
 ## Readiness (NOAA RL)
-`twa.sg_stack_conform` is at **RL4**. Evidence: `spine --path rewire validate` and `spine --path rewire test` pass (2 golden
-cases), `pytest rewire/tests` passes (12 tests), and `spine run` into a scratch lake keeps both MP2019 hub plots, all on synthetic
-fixtures only. Gaps: no run on the real stack, the export script is untested, and correct sharing of `plots`/`buildings` needs a
-current hubs snapshot as input (the spine has no per-source merge). See `transform.yaml`.
+`twa.sg_stack_conform` is at **RL4**. Evidence: `spine --path rewire validate` and `spine --path rewire test` pass (3 golden
+cases), `pytest rewire/tests` passes (14 tests), and `spine run` into a scratch lake seeded with a `ura_mp2019` `id_bridge` row
+keeps that row next to the 6 `twa_kg` rows and keeps both MP2019 hub plots, all on synthetic fixtures only. Gaps: no run on the
+real stack, the export script is untested, and correct sharing of `plots`/`buildings`/`id_bridge` needs a current hubs snapshot
+(including `id_bridge`) as input, because the spine has no per-source merge. See `transform.yaml`.
 
 ## Upstream changes
 None.

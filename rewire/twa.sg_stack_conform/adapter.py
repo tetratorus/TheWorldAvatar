@@ -6,12 +6,15 @@ Bronze layout (`stack` input, produced by export_stack_snapshot.py from a runnin
   floors.csv                building_iri, storeys                                (ontobuiltenv:hasNumberOfFloors/hasValue)
   usage.csv                 building_iri, usage, usage_share                     (ontobuiltenv:hasPropertyUsage/rdf:type)
   landplot_buildings.csv    ogc_fid, building_uuid                               (BuildingIdentificationAgent output)
-Optional `hubs` input: a snapshot of existing spine hub tables (plots.parquet / buildings.parquet). TWA features that
-overlap an existing hub (IoU >= min_iou) reuse that hub id (GERS pattern); others get an id minted from the TWA IRI.
+Optional `hubs` input: a snapshot of the lake's current Silver plots.parquet / buildings.parquet / id_bridge.parquet.
+TWA features that overlap an existing hub (IoU >= min_iou) reuse that hub id (GERS pattern); others get an id minted
+from the TWA IRI.
 
 No Silver `zoning`: LAYERS.md gives zoning to ura.mp2019_conform, and the stack's landplot LU_DESC/GPR are copies of
-MP2019. Lake.silver_write replaces whole tables, so `plots` and `buildings` keep every snapshot row (the owner's row
-wins for plots) and only add TWA features that matched no existing hub.
+MP2019. Lake.silver_write replaces whole tables, so every output is union-preserving: `plots` and `buildings` keep every
+snapshot row (the owner's row wins for plots, TWA's for matched buildings) and only add TWA features that matched no
+existing hub; `id_bridge` re-emits every snapshot row whose source is not twa_kg unchanged and replaces only the twa_kg
+rows.
 """
 from __future__ import annotations
 
@@ -38,6 +41,7 @@ USE_TYPE = {
 
 
 PLOT_COLS = ["plot_id", "area_m2", "source_version", "geometry"]
+BRIDGE_COLS = ["source", "source_id", "hub", "hub_id", "match_method", "confidence", "source_version"]
 BUILDING_COLS = ["building_id", "plot_id", "district_id", "height_m", "storeys", "use_type", "year_built",
                  "source_version", "geometry"]
 
@@ -76,6 +80,18 @@ def _bridge(source_ids: pd.Series, hub: str, rec: pd.DataFrame, version: str) ->
 def _hub_table(hubs: Path | None, name: str) -> gpd.GeoDataFrame | None:
     p = hubs / f"{name}.parquet" if hubs is not None else None
     return gpd.read_parquet(p) if p is not None and p.exists() else None
+
+
+def _keep_foreign_bridge(hubs: Path | None, twa: pd.DataFrame) -> pd.DataFrame:
+    """Snapshot id_bridge rows of every other source unchanged, then this run's twa_kg rows (old twa_kg rows dropped)."""
+    p = hubs / "id_bridge.parquet" if hubs is not None else None
+    if p is None or not p.exists():
+        return twa
+    snap = pd.read_parquet(p)
+    snap = snap.loc[snap.source != SOURCE, BRIDGE_COLS]
+    out = pd.concat([snap, twa], ignore_index=True)
+    out["confidence"] = out.confidence.astype(float)
+    return out.sort_values(["source", "source_id"]).reset_index(drop=True)
 
 
 def _keep_snapshot(snap: gpd.GeoDataFrame | None, new: gpd.GeoDataFrame, key: str, cols: list[str]) -> gpd.GeoDataFrame:
@@ -150,6 +166,7 @@ def run(inputs: dict, params: dict) -> dict:
         hub_buildings = hub_buildings[~hub_buildings.building_id.isin(buildings.building_id)]
     buildings = _keep_snapshot(hub_buildings, buildings, "building_id", BUILDING_COLS)
 
-    id_bridge = pd.concat([_bridge(plot_iri, "plot", prec, version),
-                           _bridge(b.building_iri, "building", brec, version)], ignore_index=True)
+    id_bridge = _keep_foreign_bridge(hubs, pd.concat([_bridge(plot_iri, "plot", prec, version),
+                                                      _bridge(b.building_iri, "building", brec, version)],
+                                                     ignore_index=True))
     return {"plots": plots, "buildings": buildings, "id_bridge": id_bridge}

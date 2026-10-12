@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from spine.golden import load_case_inputs, run_golden
 from spine.transform import invoke, load_descriptor, resolve_params
@@ -42,7 +43,7 @@ def test_buildings_and_bridge():
     br = out["id_bridge"].set_index("source_id")
     assert br.loc[KG + "landplot/101", "hub_id"] == "twa-p-101"
     assert br.loc[KG + "Building/5f0c7a1e-0001-4c1e-9a11-tp0000000001", "hub"] == "building"
-    assert set(out["id_bridge"].source) == {"twa_kg"}
+    assert len(br) == 6                                                         # 3 landplot + 3 building IRIs
 
 
 def test_reuses_existing_ura_hub():
@@ -62,3 +63,35 @@ def test_snapshot_plots_survive_whole_table_write():
     assert plots.source_version.to_dict() == {"MP19-TP-0001": "MP2019", "MP19-TP-0009": "MP2019",
                                               "twa-p-102": "twa-sg-stack", "twa-p-103": "twa-sg-stack"}
     assert plots.loc["MP19-TP-0001"].geometry.bounds == (29401, 28701, 29461, 28761)  # owner geometry, not TWA's
+
+
+def _key(df):
+    return df.set_index(["source", "source_id"]).sort_index()
+
+
+def test_foreign_bridge_rows_survive_whole_table_write():
+    # id_bridge is replaced as a whole table too: every non-twa_kg snapshot row must come back unchanged (rule 9)
+    for case in ("tanjong_pagar_with_ura_hubs", "tanjong_pagar_with_building_hubs"):
+        snap = pd.read_parquet(HERE / "golden" / case / "inputs" / "hubs" / "id_bridge.parquet")
+        out = _run(case)["id_bridge"]
+        foreign = snap[snap.source != "twa_kg"]
+        assert len(foreign) and set(foreign.source) <= set(out.source)
+        pd.testing.assert_frame_equal(_key(out[out.source != "twa_kg"]), _key(foreign), check_dtype=False)
+        twa = out[out.source == "twa_kg"]
+        assert len(twa) == 6 and set(twa.source_version) == {"twa-sg-stack"}  # stale twa_kg rows replaced
+        assert not out.duplicated(["source", "source_id"]).any()
+
+
+def test_snapshot_buildings_union():
+    # unmatched snapshot buildings pass through unchanged; on a matched hub TWA's row wins under the existing hub id
+    out = _run("tanjong_pagar_with_building_hubs")
+    b = out["buildings"].set_index("building_id")
+    assert sorted(b.index) == ["DUCT-B-0001", "DUCT-B-0099", "twa-b-5f0c7a1e-0002-4c1e-9a11-tp0000000002",
+                               "twa-b-5f0c7a1e-0003-4c1e-9a11-tp0000000003"]
+    assert (b.loc["DUCT-B-0001", "source_version"], b.loc["DUCT-B-0001", "height_m"]) == ("twa-sg-stack", 36.5)
+    assert b.loc["DUCT-B-0001"].geometry.area == pytest.approx(900, rel=1e-6)   # TWA footprint, not DUCT's 30x30+1
+    assert (b.loc["DUCT-B-0099", "source_version"], b.loc["DUCT-B-0099", "year_built"]) == ("duct-bdp-2023", 1985)
+    assert b.loc["DUCT-B-0099"].geometry.bounds == (30010, 30010, 30030, 30030)
+    row = out["id_bridge"].set_index("source_id").loc[KG + "Building/5f0c7a1e-0001-4c1e-9a11-tp0000000001"]
+    assert (row.hub_id, row.match_method) == ("DUCT-B-0001", "spatial_overlap")
+    assert row.confidence == pytest.approx(841 / 959, rel=1e-4)

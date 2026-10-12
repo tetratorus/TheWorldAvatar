@@ -36,14 +36,45 @@ def stack(d: Path) -> None:
     pd.DataFrame({"ogc_fid": [101, 102], "building_uuid": [U1, U2]}).to_csv(d / "landplot_buildings.csv", index=False)
 
 
+def _bridge(rows: list[tuple]) -> pd.DataFrame:
+    return pd.DataFrame(rows, columns=["source", "source_id", "hub", "hub_id", "match_method", "confidence",
+                                       "source_version"])
+
+
 def hubs(d: Path) -> None:
+    """Lake snapshot after ura.mp2019_conform: MP2019 plots + their id_bridge row (must survive the TWA run)."""
     d.mkdir(parents=True, exist_ok=True)
     gpd.GeoDataFrame({"plot_id": ["MP19-TP-0001", "MP19-TP-0009"], "source_version": "MP2019"},
                      geometry=[box(29401, 28701, 29461, 28761), box(30000, 30000, 30050, 30050)],
                      crs="EPSG:3414").to_parquet(d / "plots.parquet")
+    _bridge([("ura_mp2019", "kml_4711", "plot", "MP19-TP-0001", "exact", 1.0, "MP2019")]).to_parquet(
+        d / "id_bridge.parquet", index=False)
+
+
+def building_hubs(d: Path) -> None:
+    """Snapshot after ura.mp2019_conform + duct.bdp_conform + an older TWA run.
+
+    DUCT-B-0001 overlaps TWA building 1 (IoU 841/959) so TWA's row wins under that hub id; DUCT-B-0099 matches nothing
+    and must pass through. The stale twa_kg row is replaced by this run's twa_kg rows; all other bridge rows survive.
+    """
+    hubs(d)
+    gpd.GeoDataFrame({"building_id": ["DUCT-B-0001", "DUCT-B-0099"], "plot_id": ["MP19-TP-0001", "MP19-TP-0009"],
+                      "height_m": [35.0, 12.0], "storeys": pd.array([11, 4], dtype="Int64"),
+                      "use_type": ["RESIDENTIAL", "OTHER"], "year_built": pd.array([1998, 1985], dtype="Int64"),
+                      "source_version": "duct-bdp-2023"},
+                     geometry=[box(29411, 28711, 29441, 28741), box(30010, 30010, 30030, 30030)],
+                     crs="EPSG:3414").to_parquet(d / "buildings.parquet")
+    _bridge([("ura_mp2019", "kml_4711", "plot", "MP19-TP-0001", "exact", 1.0, "MP2019"),
+             ("duct_bdp", "BDP-000001", "building", "DUCT-B-0001", "exact", 1.0, "duct-bdp-2023"),
+             ("duct_bdp", "BDP-000099", "building", "DUCT-B-0099", "exact", 1.0, "duct-bdp-2023"),
+             ("cea_zone", "B1001", "building", "DUCT-B-0001", "manual", None, "cea-3.39"),
+             ("twa_kg", KG + "Building/stale-uuid", "building", "twa-b-stale-uuid", "exact", 1.0, "twa-sg-stack-old")]
+            ).to_parquet(d / "id_bridge.parquet", index=False)
 
 
 if __name__ == "__main__":
     stack(HERE / "tanjong_pagar_synthetic/inputs/stack")
     stack(HERE / "tanjong_pagar_with_ura_hubs/inputs/stack")
     hubs(HERE / "tanjong_pagar_with_ura_hubs/inputs/hubs")
+    stack(HERE / "tanjong_pagar_with_building_hubs/inputs/stack")
+    building_hubs(HERE / "tanjong_pagar_with_building_hubs/inputs/hubs")
