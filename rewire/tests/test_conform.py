@@ -4,7 +4,7 @@ import pytest
 from spine.golden import load_case_inputs, run_golden
 from spine.transform import invoke, load_descriptor, resolve_params
 
-HERE = Path(__file__).resolve().parents[1]
+HERE = Path(__file__).resolve().parents[1] / "twa.sg_stack_conform"
 DESC = load_descriptor(HERE / "transform.yaml")
 KG = "https://www.theworldavatar.com/kg/"
 
@@ -18,13 +18,17 @@ def test_golden_cases_pass():
     assert res and all(r.passed for r in res), [r.messages for r in res]
 
 
-def test_plots_zoning_hand_checked():
+def test_plots_hand_checked():
     out = _run("tanjong_pagar_synthetic")
     plots = out["plots"].set_index("plot_id")
     assert out["plots"].crs.to_epsg() == 3414
     assert plots.area_m2.to_dict() == pytest.approx({"twa-p-101": 3600, "twa-p-102": 2400, "twa-p-103": 1200}, rel=1e-6)
-    z = out["zoning"].set_index("plot_id")
-    assert z.gross_plot_ratio["twa-p-101"] == 2.8 and z.gross_plot_ratio.isna()["twa-p-103"]  # "EVA" -> null
+
+
+def test_no_zoning_output():
+    # zoning belongs to ura.mp2019_conform (LAYERS.md); silver_write would replace the MP2019 table
+    assert "zoning" not in _run("tanjong_pagar_synthetic")
+    assert [o["name"] for o in DESC.data["outputs"]] == ["plots", "buildings", "id_bridge"]
 
 
 def test_buildings_and_bridge():
@@ -49,3 +53,12 @@ def test_reuses_existing_ura_hub():
     assert row.confidence == pytest.approx(3481 / 3719, rel=1e-4)              # IoU of 59x59 overlap
     assert out["buildings"].set_index("building_id").loc[
         "twa-b-5f0c7a1e-0001-4c1e-9a11-tp0000000001", "plot_id"] == "MP19-TP-0001"
+
+
+def test_snapshot_plots_survive_whole_table_write():
+    # Lake.silver_write replaces the table: every MP2019 hub row must come back unchanged, plus only unmatched TWA plots
+    plots = _run("tanjong_pagar_with_ura_hubs")["plots"].set_index("plot_id")
+    assert sorted(plots.index) == ["MP19-TP-0001", "MP19-TP-0009", "twa-p-102", "twa-p-103"]
+    assert plots.source_version.to_dict() == {"MP19-TP-0001": "MP2019", "MP19-TP-0009": "MP2019",
+                                              "twa-p-102": "twa-sg-stack", "twa-p-103": "twa-sg-stack"}
+    assert plots.loc["MP19-TP-0001"].geometry.bounds == (29401, 28701, 29461, 28761)  # owner geometry, not TWA's

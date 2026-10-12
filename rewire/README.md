@@ -1,19 +1,20 @@
 # rewire/ — The World Avatar on the sg-urban-spine
 
-This folder plugs The World Avatar (TWA) Singapore stack into [sg-urban-spine](https://github.com/tetratorus/sg-urban-spine), the
+This folder plugs The World Avatar (TWA) Singapore stack into [sg-urban-spine](https://github.com/tetratorus/saas-middleware/tree/sg-urban-spine), the
 shared model shell for the URA "Rewire, don't rewrite" demo. **No upstream TWA code is changed.** Everything here sits beside it.
 
 ```
-pip install 'git+https://github.com/tetratorus/sg-urban-spine@main' pytest
-spine validate rewire && spine test rewire && python -m pytest rewire
+pip install 'git+https://github.com/tetratorus/saas-middleware@sg-urban-spine' pytest
+spine --path rewire validate && spine --path rewire test && python -m pytest rewire/tests
 ```
 
 | Path | Spine role | What it does |
 |---|---|---|
-| `twa.sg_stack_conform/` | conformer (Bronze → Silver) | TWA Singapore stack snapshot → Silver `plots`, `zoning`, `buildings` + `id_bridge` |
+| `twa.sg_stack_conform/` | conformer (Bronze → Silver) | TWA Singapore stack snapshot → Silver `buildings`, `plots` + `id_bridge` (no `zoning`, see below) |
 | `twa.sg_stack_conform/export_stack_snapshot.py` | Bronze ingest | Dumps a running stack (PostGIS + Ontop) into the Bronze layout. **Untested.** |
 | `agents/cea_agent_bridge.py` | transform adapter (Gold ↔ agent API) | Points CEAAgent at `cea.building_demand`: IRIs ↔ hub ids, Gold → `/query` response shape |
 | `agents/gfa_agent_bridge.py`, `agents/gfa_allowable.obda` | transform adapter / view | Points the landplot `ref_gfa` layer and GFAAgent at `gfa.allowable` Gold. Ontop publishes it as `ontoplot:hasMaximumPermittedGFA` |
+| `tests/` | pytest | Golden + adapter tests for the conformer and both agent bridges (`pytest rewire/tests`) |
 
 ## Data used: synthetic fixtures only
 The real Singapore stack data sits in a CARES-only Dropbox (`Deploy/stacks/Singapore/README.md`). Building the Java agents also
@@ -32,6 +33,19 @@ adapter reprojects both to EPSG:3414.
 the adapter falls back to "the building's centroid lies inside the plot". The optional Bronze input `hubs` is a snapshot of
 existing spine hub tables (for example from `ura.mp2019_conform`). It lets TWA features reuse those hub ids instead of creating
 parallel keys.
+
+## Which Silver tables this writes, and why not `zoning`
+LAYERS.md lists `twa.sg_stack_conform` for **buildings** and gives `plots`/`zoning` to `ura.mp2019_conform`. The stack's landplot
+`LU_DESC` and `GPR` are copies of the URA Master Plan 2019, so a TWA `zoning` table would only duplicate MP2019, and because
+`Lake.silver_write` replaces whole tables it would wipe the MP2019 one. So:
+- **No `zoning` output.** GFA and anything else that needs GPR read `ura.mp2019_conform`'s Silver `zoning`.
+- **`plots` is still emitted** (the task asks for plots, and the landplot IRIs need a plot hub to bridge to). It is
+  union-preserving: every row of the `hubs` snapshot comes back unchanged (MP2019 geometry and `source_version` win), and only
+  TWA landplots that matched no existing hub are added as `twa-p-*`. Covered by the `tanjong_pagar_with_ura_hubs` golden and
+  `test_snapshot_plots_survive_whole_table_write`.
+- **`buildings`** works the same way. TWA rows win for matched hubs (TWA is a listed buildings owner), and unmatched snapshot
+  buildings (e.g. from `duct.bdp_conform`) pass through.
+- Run it with a current `hubs` snapshot of the lake's Silver `plots`/`buildings`. Without one, those two tables hold TWA rows only.
 
 ## CEAAgent → `cea.building_demand`
 CEAAgent (Java + its own CEA Python workflow) stays the stack-side runtime. The spine-facing contract is `cea.building_demand`
@@ -55,9 +69,10 @@ The TWA code is MIT (`LICENSE.txt`). The Singapore stack *data* has its own sour
 provider), so the descriptor declares `commercial_use: review`.
 
 ## Readiness (NOAA RL)
-`twa.sg_stack_conform` is at **RL4**. Evidence: `spine validate` and `spine test` pass, 10 pytest checks pass, all on synthetic
-fixtures only. Gaps: no run on the real stack, the export script is untested, and the spine needs a per-source merge for shared
-Silver tables. See `transform.yaml`.
+`twa.sg_stack_conform` is at **RL4**. Evidence: `spine --path rewire validate` and `spine --path rewire test` pass (2 golden
+cases), `pytest rewire/tests` passes (12 tests), and `spine run` into a scratch lake keeps both MP2019 hub plots, all on synthetic
+fixtures only. Gaps: no run on the real stack, the export script is untested, and correct sharing of `plots`/`buildings` needs a
+current hubs snapshot as input (the spine has no per-source merge). See `transform.yaml`.
 
 ## Upstream changes
 None.

@@ -4,13 +4,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
 from cea_agent_bridge import gold_to_cea_query, iris_to_hub_ids
 from gfa_agent_bridge import gold_to_landplot_ref_gfa, stack_ref_gfa
 from spine.golden import load_case_inputs
 from spine.transform import invoke, load_descriptor, resolve_params
 
-CONFORM = Path(__file__).resolve().parents[2] / "twa.sg_stack_conform"
+CONFORM = Path(__file__).resolve().parents[1] / "twa.sg_stack_conform"
 KG = "https://www.theworldavatar.com/kg/"
 B1 = KG + "Building/5f0c7a1e-0001-4c1e-9a11-tp0000000001"
 
@@ -35,8 +35,12 @@ def test_unknown_iri_rejected(silver):
 
 
 def test_gfa_allowable_back_to_landplot_iris(silver):
+    # stand-in for Silver zoning (owned by ura.mp2019_conform): the fixture's MP2019 GPR per landplot ("EVA" -> null)
+    hub = silver["id_bridge"][silver["id_bridge"].hub == "plot"].set_index("source_id").hub_id
+    zoning = pd.DataFrame({"plot_id": [hub[KG + f"landplot/{f}"] for f in (101, 102, 103)],
+                           "gross_plot_ratio": [2.8, 4.2, None]})
     # stand-in for Gold gfa.allowable (owned by 3d-landuse-planning): GPR x area, as in the spine toy example
-    ref = stack_ref_gfa(silver["plots"], silver["zoning"])
+    ref = stack_ref_gfa(silver["plots"], zoning)
     gold = pd.DataFrame({"plot_id": ref.index, "allowable_gfa_m2": ref.values})
     out = gold_to_landplot_ref_gfa(gold, silver["id_bridge"]).set_index("iri").ref_gfa
     assert out.to_dict() == pytest.approx({KG + "landplot/101": 3600 * 2.8, KG + "landplot/102": 2400 * 4.2,

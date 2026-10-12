@@ -1,12 +1,15 @@
 id: twa.sg_stack_conform
 version: 0.1.0
 kind: conformer
-title: TWA Singapore stack snapshot -> silver plots, zoning, buildings + id_bridge (TWA IRIs)
+title: TWA Singapore stack snapshot -> silver buildings, plots + id_bridge (TWA IRIs)
 upstream:
   repo: tetratorus/TheWorldAvatar (fork of cambridge-cares/TheWorldAvatar) - Deploy/stacks/Singapore
   license: MIT
   commercial_use: review
   notes: >-
+    No Silver zoning output: LAYERS.md assigns zoning to ura.mp2019_conform and the stack's landplot LU_DESC/GPR are
+    MP2019 copies. Lake.silver_write replaces whole tables, so plots/buildings re-emit every row of the optional hubs
+    snapshot unchanged (MP2019 owns plots) and add only TWA features that matched no existing hub.
     Code is MIT (LICENSE.txt). The Singapore stack data (CARES-only Dropbox; landplots from URA Master Plan, CityGML
     buildings, OSM usage) carries its own source licences (Singapore Open Data Licence, ODbL, ...) - review before
     commercial use.
@@ -21,7 +24,6 @@ parameters:
     min_iou: {type: number, default: 0.5, minimum: 0, maximum: 1}
 outputs:
   - {name: plots}
-  - {name: zoning}
   - {name: buildings}
   - {name: id_bridge}
 golden:
@@ -31,17 +33,19 @@ golden:
     reference: >-
       Synthetic 3-plot / 3-building fixture in the stack's own export shapes (golden/make_fixture.py). The conformer is
       new glue code, not upstream science. Expected values were frozen from adapter output and checked by hand in
-      tests/test_conform.py (areas, GPR parsing, IRI -> hub mapping).
+      rewire/tests/test_conform.py (areas, CRS round trip, IRI -> hub mapping).
   - name: tanjong_pagar_with_ura_hubs
     path: golden/tanjong_pagar_with_ura_hubs
     tolerance: {atol: 1.0e-6}
-    reference: Same fixture plus an existing ura_mp2019 plot hub, so a TWA landplot reuses that hub id (spatial_overlap).
+    reference: >-
+      Same fixture plus a 2-plot ura_mp2019 hub snapshot. TWA landplot 101 reuses hub MP19-TP-0001 (spatial_overlap);
+      both MP2019 plot rows come back unchanged in silver plots, plus the 2 unmatched TWA plots.
 readiness:
   level: 4
   evidence:
     - spine validate + spine test pass on 2 synthetic Tanjong Pagar golden cases (EPSG:4326 plots, EPSG:24500 footprints -> EPSG:3414).
-    - pytest rewire/twa.sg_stack_conform/tests checks areas, GPR parsing (same regex as landplot_layer.sql), IRI patterns and hub reuse.
+    - pytest rewire/tests (12 tests) checks areas, CRS round trip, IRI patterns, hub reuse, no zoning output, and that hub-snapshot plots survive a whole-table silver write.
   gaps:
     - Not run on the real Singapore stack. The data is in a CARES-only Dropbox, and building the agents needs Maven GitHub-packages credentials.
     - export_stack_snapshot.py is untested (no running stack). The column names come from stack configs and agent SQL/SPARQL.
-    - Real silver tables are shared across conformers, so the spine needs a per-source merge before this can run alongside ura.mp2019_conform.
+    - Running alongside ura.mp2019_conform / duct.bdp_conform needs a current hubs snapshot as input (spine has no per-source merge in silver_write); without it the plots/buildings tables are replaced by TWA rows only.
