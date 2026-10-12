@@ -1,0 +1,64 @@
+id: twa.sg_stack_conform
+version: 0.1.0
+kind: conformer
+title: TWA Singapore stack snapshot -> silver buildings, plots + id_bridge (TWA IRIs)
+upstream:
+  repo: tetratorus/TheWorldAvatar (fork of cambridge-cares/TheWorldAvatar) - Deploy/stacks/Singapore
+  license: MIT
+  commercial_use: review
+  notes: >-
+    No Silver zoning output: LAYERS.md assigns zoning to ura.mp2019_conform and the stack's landplot LU_DESC/GPR are
+    MP2019 copies. Lake.silver_write replaces whole tables, so all three outputs are union-preserving against the
+    optional hubs snapshot, which must hold the lake's current plots, buildings AND id_bridge: plots/buildings re-emit
+    every snapshot row (MP2019 owns plots; TWA wins only on matched building hubs) and add only TWA features that
+    matched no existing hub; id_bridge re-emits every non-twa_kg row (ura_mp2019, duct_bdp, cea_zone, ...) unchanged
+    and replaces only the twa_kg rows.
+    Code is MIT (LICENSE.txt). The Singapore stack data (CARES-only Dropbox; landplots from URA Master Plan, CityGML
+    buildings, OSM usage) carries its own source licences (Singapore Open Data Licence, ODbL, ...) - review before
+    commercial use.
+runtime: {type: python, entrypoint: "adapter:run"}
+inputs:
+  - {name: stack, source: "bronze:twa_sg_stack"}
+  - {name: hubs, source: "bronze:spine_hub_snapshot", optional: true}
+parameters:
+  type: object
+  properties:
+    source_version: {type: string, default: twa-sg-stack}
+    min_iou: {type: number, default: 0.5, minimum: 0, maximum: 1}
+outputs:
+  - {name: plots}
+  - {name: buildings}
+  - {name: id_bridge}
+golden:
+  - name: tanjong_pagar_synthetic
+    path: golden/tanjong_pagar_synthetic
+    tolerance: {atol: 1.0e-6}
+    reference: >-
+      Synthetic 3-plot / 3-building fixture in the stack's own export shapes (golden/make_fixture.py). The conformer is
+      new glue code, not upstream science. Expected values were frozen from adapter output and checked by hand in
+      rewire/tests/test_conform.py (areas, CRS round trip, IRI -> hub mapping).
+  - name: tanjong_pagar_with_ura_hubs
+    path: golden/tanjong_pagar_with_ura_hubs
+    tolerance: {atol: 1.0e-6}
+    reference: >-
+      Same fixture plus a ura_mp2019 hub snapshot (2 plots + 1 id_bridge row). TWA landplot 101 reuses hub
+      MP19-TP-0001 (spatial_overlap); both MP2019 plot rows come back unchanged in silver plots, plus the 2 unmatched
+      TWA plots, and the ura_mp2019 id_bridge row survives next to the 6 twa_kg rows.
+  - name: tanjong_pagar_with_building_hubs
+    path: golden/tanjong_pagar_with_building_hubs
+    tolerance: {atol: 1.0e-6}
+    reference: >-
+      Same fixture plus a snapshot with MP2019 plots, 2 duct_bdp buildings and an id_bridge holding ura_mp2019,
+      duct_bdp, cea_zone and one stale twa_kg row. TWA building 1 matches DUCT-B-0001 (IoU 841/959) and its TWA row
+      wins under that hub id; DUCT-B-0099 passes through unchanged; every non-twa_kg bridge row survives and the stale
+      twa_kg row is replaced by this run's rows.
+readiness:
+  level: 4
+  evidence:
+    - spine validate + spine test pass on 3 synthetic Tanjong Pagar golden cases (EPSG:4326 plots, EPSG:24500 footprints -> EPSG:3414).
+    - pytest rewire/tests checks areas, CRS round trip, IRI patterns, hub reuse, no zoning output, and that hub-snapshot plots, buildings and foreign id_bridge rows survive a whole-table silver write.
+    - spine run into a scratch lake seeded with a ura_mp2019 id_bridge row (hubs snapshot in Bronze) keeps that row next to the 6 twa_kg rows.
+  gaps:
+    - Not run on the real Singapore stack. The data is in a CARES-only Dropbox, and building the agents needs Maven GitHub-packages credentials.
+    - export_stack_snapshot.py is untested (no running stack). The column names come from stack configs and agent SQL/SPARQL.
+    - Running alongside ura.mp2019_conform / duct.bdp_conform needs a current hubs snapshot of Silver plots, buildings AND id_bridge as input (spine has no per-source merge in silver_write). Without it, or with a stale one, plots/buildings/id_bridge are replaced by TWA rows only and every other source's id_bridge rows (ura_mp2019, duct_bdp, cea_zone, ...) are lost.
