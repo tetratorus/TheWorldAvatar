@@ -1,0 +1,13 @@
+[PrefixDeclaration]
+xsd:        http://www.w3.org/2001/XMLSchema#
+om:         http://www.ontology-of-units-of-measure.org/resource/om-2/
+ontoplot:   https://www.theworldavatar.com/kg/ontoplot/
+landplot:   https://www.theworldavatar.com/kg/landplot/
+
+[MappingDeclaration] @collection [[
+mappingId   spine gold gfa.allowable -> OntoPlot maximum permitted GFA
+target      landplot:{ogc_fid} ontoplot:hasMaximumPermittedGFA landplot:{ogc_fid}/maxPermittedGFA .
+            landplot:{ogc_fid}/maxPermittedGFA a om:Area ; om:hasValue landplot:{ogc_fid}/maxPermittedGFA/value .
+            landplot:{ogc_fid}/maxPermittedGFA/value a om:Measure ; om:hasNumericalValue {ref_gfa}^^xsd:double ; om:hasUnit om:squareMetre .
+source      SELECT split_part(iri, '/', 6) AS ogc_fid, ref_gfa FROM spine_gold.gfa_allowable
+]]
